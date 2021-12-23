@@ -140,7 +140,8 @@ def main_worker(args):
     iters = args.iters if (args.iters>0) else None
     dataset_source = get_data(args.dataset_source, args.data_dir)
     dataset_target = get_data(args.dataset_target, args.data_dir)
-    test_loader_target = get_test_loader(dataset_target, args.height, args.width, args.batch_size, args.workers)
+    if not args.use_lab314_dataset:
+        test_loader_target = get_test_loader(dataset_target, args.height, args.width, args.batch_size, args.workers)
     tar_cluster_loader = get_test_loader(dataset_target, args.height, args.width, args.batch_size, args.workers, testset=dataset_target.train)
     sour_cluster_loader = get_test_loader(dataset_source, args.height, args.width, args.batch_size, args.workers, testset=dataset_source.train)
 
@@ -223,9 +224,9 @@ def main_worker(args):
 
         train_loader_target.new_epoch()
 
-        trainer.train(epoch, train_loader_target, optimizer,
-                    ce_soft_weight=args.soft_ce_weight, tri_soft_weight=args.soft_tri_weight,
-                    print_freq=args.print_freq, train_iters=len(train_loader_target))
+        result_1, result_2 = trainer.train(epoch, train_loader_target, optimizer,
+                                ce_soft_weight=args.soft_ce_weight, tri_soft_weight=args.soft_tri_weight,
+                                print_freq=args.print_freq, train_iters=len(train_loader_target))
 
         def save_model(model_ema, is_best, best_mAP, mid):
             save_checkpoint({
@@ -235,20 +236,27 @@ def main_worker(args):
             }, is_best, fpath=osp.join(args.logs_dir, 'model'+str(mid)+'_checkpoint.pth.tar'))
 
         if ((epoch+1)%args.eval_step==0 or (epoch==args.epochs-1)):
-            mAP_1 = evaluator_1_ema.evaluate(test_loader_target, dataset_target.query, dataset_target.gallery, cmc_flag=False)
-            mAP_2 = evaluator_2_ema.evaluate(test_loader_target, dataset_target.query, dataset_target.gallery, cmc_flag=False)
-            is_best = (mAP_1>best_mAP) or (mAP_2>best_mAP)
-            best_mAP = max(mAP_1, mAP_2, best_mAP)
-            save_model(model_1_ema, (is_best and (mAP_1>mAP_2)), best_mAP, 1)
-            save_model(model_2_ema, (is_best and (mAP_1<=mAP_2)), best_mAP, 2)
+            with torch.no_grad():
+                if not args.use_lab314_dataset:
+                    mAP_1 = evaluator_1_ema.evaluate(test_loader_target, dataset_target.query, dataset_target.gallery, cmc_flag=False)
+                    mAP_2 = evaluator_2_ema.evaluate(test_loader_target, dataset_target.query, dataset_target.gallery, cmc_flag=False)
+                else:
+                    mAP_1 = result_1
+                    mAP_2 = result_2
+                is_best = (mAP_1>best_mAP) or (mAP_2>best_mAP)
+                best_mAP = max(mAP_1, mAP_2, best_mAP)
+                save_model(model_1_ema, (is_best and (mAP_1>mAP_2)), best_mAP, 1)
+                save_model(model_2_ema, (is_best and (mAP_1<=mAP_2)), best_mAP, 2)
 
             print('\n * Finished epoch {:3d}  model no.1 mAP: {:5.1%} model no.2 mAP: {:5.1%}  best: {:5.1%}{}\n'.
                   format(epoch, mAP_1, mAP_2, best_mAP, ' *' if is_best else ''))
 
-    print ('Test on the best model.')
-    checkpoint = load_checkpoint(osp.join(args.logs_dir, 'model_best.pth.tar'))
-    model_1_ema.load_state_dict(checkpoint['state_dict'])
-    evaluator_1_ema.evaluate(test_loader_target, dataset_target.query, dataset_target.gallery, cmc_flag=True)
+    if not args.use_lab314_dataset:
+        with torch.no_grad():
+            print ('Test on the best model.')
+            checkpoint = load_checkpoint(osp.join(args.logs_dir, 'model_best.pth.tar'))
+            model_1_ema.load_state_dict(checkpoint['state_dict'])
+            evaluator_1_ema.evaluate(test_loader_target, dataset_target.query, dataset_target.gallery, cmc_flag=True)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="MMT Training")
@@ -268,6 +276,8 @@ if __name__ == '__main__':
                              "(batch_size // num_instances) identities, and "
                              "each identity has num_instances instances, "
                              "default: 0 (NOT USE)")
+    parser.add_argument('--use-lab314-dataset', action='store_true',
+                        help='use lab314 dataset for training')
     # model
     parser.add_argument('-a', '--arch', type=str, default='resnet50',
                         choices=models.names())

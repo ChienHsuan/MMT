@@ -261,6 +261,8 @@ class MMTTrainer(object):
                               losses_ce_soft.avg, losses_tri_soft.avg,
                               precisions[0].avg, precisions[1].avg))
 
+        return precisions[0].avg, precisions[1].avg
+
     def _update_ema_variables(self, model, ema_model, alpha, global_step):
         alpha = min(1 - 1 / (global_step + 1), alpha)
         for ema_param, param in zip(ema_model.parameters(), model.parameters()):
